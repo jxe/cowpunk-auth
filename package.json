@@ -1,0 +1,32 @@
+{
+  "name": "cowpunk-auth",
+  "version": "0.0.1",
+  "description": "Cowpunk auth",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsup"
+  },
+  "author": "Joe Edelman <joe.edelman@gmail.com>",
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "mailgun.js": "^9.1.2",
+    "validator": "^13.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^18.16.19",
+    "@types/validator": "^13.7.17",
+    "tsup": "^7.1.0",
+    "typescript": "latest",
+    "@remix-run/node": "latest"
+  },
+  "peerDependencies": {
+    "@remix-run/node": "latest"
+  }
+}
