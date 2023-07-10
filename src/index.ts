@@ -16,16 +16,35 @@ function randomCode(digits: number) {
   return code
 }
 
+interface EmailCodeRow {
+  email: string
+  loginCode: string
+  loginCodeExpiresAt: Date
+  register: boolean
+  extraData?: [string, FormDataEntryValue][]
+}
+
+interface UserRow {
+  id: number | string
+  email: string
+  role: string[]
+}
+
 export interface Config {
   site: string
   loginFrom: string
   users: {
-    findUnique: (args: { where: { email: string } | { id: number } }) => Promise<{ id: number | string, email: string, role: string[] } | null>
+    findUnique: (args: { where: { email: string } | { id: number } }) => Promise<UserRow | null>
+    create: (args: { data: { email: string } }) => Promise<UserRow>
   }
   emailCodes: {
-    findUnique: (args: { where: { email: string } }) => Promise<{ loginCode: string, loginCodeExpiresAt: Date } | null>
-    findFirst: (args: { where: { email: string, loginCode: string } }) => Promise<{ loginCode: string, loginCodeExpiresAt: Date } | null>
-    upsert: (args: { where: { email: string }, create: { email: string, loginCode: string, loginCodeExpiresAt: Date }, update: { loginCode: string, loginCodeExpiresAt: Date } }) => Promise<{ loginCode: string, loginCodeExpiresAt: Date }>
+    findUnique: (args: { where: { email: string } }) => Promise<EmailCodeRow | null>
+    findFirst: (args: { where: { email: string, loginCode: string } }) => Promise<EmailCodeRow | null>
+    upsert: (args: {
+      where: { email: string },
+      create: EmailCodeRow,
+      update: Omit<EmailCodeRow, 'email'>
+    }) => Promise<EmailCodeRow>
   }
 }
 
@@ -54,13 +73,13 @@ export function cowpunkify(config: Config) {
       return await config.users.findUnique({ where: { id: userId } })
     },
 
-    async upsertLoginCode(email: string) {
+    async upsertLoginCode(email: string, newUserOK: boolean, extraData?: [string, FormDataEntryValue][]) {
       const loginCode = randomCode(6)
       const loginCodeExpiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24)
       await config.emailCodes.upsert({
         where: { email },
-        create: { email, loginCode, loginCodeExpiresAt },
-        update: { loginCode, loginCodeExpiresAt }
+        create: { email, loginCode, loginCodeExpiresAt, register: newUserOK, extraData },
+        update: { loginCode, loginCodeExpiresAt, register: newUserOK, extraData }
       })
       return loginCode
     },
@@ -85,30 +104,39 @@ export function cowpunkify(config: Config) {
       this.sendLoginCode(email, entry.loginCode)
     },
 
+    // TODO: use extra data if supplied
     async userForLoginCode(email: string, code: string) {
       const entry = await config.emailCodes.findFirst({
         where: { email, loginCode: code },
       })
       if (!entry) throw new Error("Invalid code")
       if (entry.loginCodeExpiresAt < new Date()) throw new Error("Code expired")
-      let user = await this.userByEmail(email)
-      if (!user) throw new Error('User not found')
-      return user
+      if (entry.register) {
+        const extraFields = entry.extraData?.reduce((acc, [key, value]) => ({ ...acc, [key]: value }), {})
+        // TODO: security hole
+        return await config.users.create({
+          data: { email, ...extraFields },
+        })
+      } else {
+        return config.users.findUnique({ where: { email } })
+      }
     },
 
     async loginSubmitAction({ request }: ActionArgs) {
       const data = await request.formData()
+      const newUserOK = data.get('register') ? true : false
       let email = data.get('email') as string
+      const extraData = Array.from(data.entries()).filter(([key]) => key !== 'email' && key !== 'register')
       if (!email || !validator.isEmail(email)) throw new Error('Invalid email')
       email = validator.normalizeEmail(email) as string
       const redirectURL = data.get('redirect') as string | undefined
       const user = await this.userByEmail(email)
-      if (!user) throw new Error('User not found')
-      const loginCode = await this.upsertLoginCode(email)
+      if (!user && !newUserOK) throw new Error('User not found')
+      const loginCode = await this.upsertLoginCode(email, newUserOK, extraData)
       await this.sendLoginCode(email, loginCode)
       const search = new URLSearchParams()
       search.set('email', email)
-      if (redirectURL) search.set('successRedirect', redirectURL)
+      if (redirectURL) search.set('redirect', redirectURL)
       return redirect(`/auth/code?${search.toString()}`)
     },
 
@@ -119,6 +147,7 @@ export function cowpunkify(config: Config) {
       return json({ LOGIN_EMAIL_FROM: this.config.loginFrom, })
     },
 
+    // TODO: register and extra data
     async codeSubmitAction({ request }: ActionArgs) {
       const data = await request.formData()
       let email = data.get('email') as string
@@ -131,7 +160,8 @@ export function cowpunkify(config: Config) {
         let code = data.get("code") as string
         if (!email || !code) throw new Error("Missing email or code");
         const user = await this.userForLoginCode(email, code)
-        const redirectTo = data.get("successRedirect") as string || "/"
+        if (!user) throw new Error("User not found")
+        const redirectTo = data.get("redirect") as string || "/"
         const session = await this.storage.getSession()
         session.set('userId', user.id)
         session.set('email', email)
