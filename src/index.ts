@@ -21,7 +21,13 @@ interface EmailCodeRow {
   loginCode: string
   loginCodeExpiresAt: Date
   register: boolean
-  extraData?: [string, FormDataEntryValue][]
+  extraData: any
+}
+
+type EmailCodeWithJson = EmailCodeRow & { extraData: any }
+
+interface UserRequired {
+  email: string
 }
 
 interface UserRow {
@@ -30,26 +36,26 @@ interface UserRow {
   role: string[]
 }
 
-export interface Config {
+export type Config<R extends UserRequired, T extends UserRow> = {
   site: string
   loginFrom: string
   users: {
-    findUnique: (args: { where: { email: string } | { id: number } }) => Promise<UserRow | null>
-    create: (args: { data: { email: string } }) => Promise<UserRow>
+    findUnique: (args: { where: { email: string } | { id: number } }) => Promise<T | null>
+    create: (args: { data: R }) => Promise<T>
   }
   emailCodes: {
     findUnique: (args: { where: { email: string } }) => Promise<EmailCodeRow | null>
     findFirst: (args: { where: { email: string, loginCode: string } }) => Promise<EmailCodeRow | null>
     upsert: (args: {
       where: { email: string },
-      create: EmailCodeRow,
-      update: Omit<EmailCodeRow, 'email'>
+      create: EmailCodeWithJson,
+      update: Omit<EmailCodeWithJson, 'email'>
     }) => Promise<EmailCodeRow>
   }
 }
 
-export function cowpunkify(config: Config) {
-  return {
+export function cowpunkify<R extends UserRequired, T extends UserRow>(config: Config<R, T>) {
+  const punk = {
     config,
 
     storage: createCookieSessionStorage({
@@ -67,13 +73,17 @@ export function cowpunkify(config: Config) {
       },
     }),
 
+    async getUserId(request: Request) {
+      return (await this.storage.getSession(request.headers.get("Cookie"))).get('userId')
+    },
+
     async getCurrentUser(request: Request) {
-      const userId = (await this.storage.getSession(request.headers.get("Cookie"))).get('userId')
+      const userId = await this.getUserId(request)
       if (!userId) return null
       return await config.users.findUnique({ where: { id: userId } })
     },
 
-    async upsertLoginCode(email: string, newUserOK: boolean, extraData?: [string, FormDataEntryValue][]) {
+    async upsertLoginCode(email: string, newUserOK: boolean, extraData?: [string, string][]) {
       const loginCode = randomCode(6)
       const loginCodeExpiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24)
       await config.emailCodes.upsert({
@@ -112,10 +122,11 @@ export function cowpunkify(config: Config) {
       if (!entry) throw new Error("Invalid code")
       if (entry.loginCodeExpiresAt < new Date()) throw new Error("Code expired")
       if (entry.register) {
-        const extraFields = entry.extraData?.reduce((acc, [key, value]) => ({ ...acc, [key]: value }), {})
+        const extraData = entry.extraData as [string, string][] | undefined
+        const extraFields = extraData?.reduce((acc, [key, value]) => ({ ...acc, [key]: value }), {})
         // TODO: security hole
         return await config.users.create({
-          data: { email, ...extraFields },
+          data: { email, ...extraFields } as R,
         })
       } else {
         return config.users.findUnique({ where: { email } })
@@ -126,14 +137,14 @@ export function cowpunkify(config: Config) {
       const data = await request.formData()
       const newUserOK = data.get('register') ? true : false
       let email = data.get('email') as string
-      const extraData = Array.from(data.entries()).filter(([key]) => key !== 'email' && key !== 'register')
+      const extraData = Array.from(data.entries()).filter(([key]) => key !== 'email' && key !== 'register' && key !== 'redirect').filter(x => x[1] instanceof String) as [string, string][]
       if (!email || !validator.isEmail(email)) throw new Error('Invalid email')
       email = validator.normalizeEmail(email) as string
       const redirectURL = data.get('redirect') as string | undefined
-      const user = await this.userByEmail(email)
+      const user = await punk.userByEmail(email)
       if (!user && !newUserOK) throw new Error('User not found')
-      const loginCode = await this.upsertLoginCode(email, newUserOK, extraData)
-      await this.sendLoginCode(email, loginCode)
+      const loginCode = await punk.upsertLoginCode(email, newUserOK, extraData)
+      await punk.sendLoginCode(email, loginCode)
       const search = new URLSearchParams()
       search.set('email', email)
       if (redirectURL) search.set('redirect', redirectURL)
@@ -144,7 +155,7 @@ export function cowpunkify(config: Config) {
       const url = new URL(request.url)
       const email = url.searchParams.get('email')
       if (!email || !validator.isEmail(email)) throw redirect('/auth/login')
-      return json({ LOGIN_EMAIL_FROM: this.config.loginFrom, })
+      return json({ LOGIN_EMAIL_FROM: punk.config.loginFrom, })
     },
 
     // TODO: register and extra data
@@ -154,24 +165,25 @@ export function cowpunkify(config: Config) {
       if (!email || !validator.isEmail(email)) throw new Error('Invalid email')
       email = validator.normalizeEmail(email) as string
       if (data.get('resend')) {
-        await this.resendLoginCode(email)
+        await punk.resendLoginCode(email)
         return json({ resent: true })
       } else {
         let code = data.get("code") as string
         if (!email || !code) throw new Error("Missing email or code");
-        const user = await this.userForLoginCode(email, code)
+        const user = await punk.userForLoginCode(email, code)
         if (!user) throw new Error("User not found")
         const redirectTo = data.get("redirect") as string || "/"
-        const session = await this.storage.getSession()
+        const session = await punk.storage.getSession()
         session.set('userId', user.id)
         session.set('email', email)
         session.set("roles", [...user.role || []])
         return redirect(redirectTo, {
           headers: {
-            "Set-Cookie": await this.storage.commitSession(session),
+            "Set-Cookie": await punk.storage.commitSession(session),
           },
         });
       }
     }
   }
+  return punk
 }
