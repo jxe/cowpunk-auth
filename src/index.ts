@@ -3,7 +3,7 @@ import Mailgun from "mailgun.js";
 import formData from "form-data";
 import validator from 'validator';
 
-function env(name: string) {
+function env(name: string,) {
   if (process.env[name]) return process.env[name]!
   throw new Error(`Missing environment variable: ${name}`)
 }
@@ -99,7 +99,11 @@ export function cowpunkify<R extends UserRequired, T extends UserRow>(config: Co
     },
 
     async sendLoginCode(email: string, code: string) {
-      const mailgun = new Mailgun(formData).client({ username: 'api', key: env("MAILGUN_API_KEY") })
+      const mailgun = new Mailgun(formData).client({
+        username: 'api',
+        key: env("MAILGUN_API_KEY"),
+        url: process.env["MAILGUN_URL"] || undefined,
+      })
       await mailgun.messages.create(env("MAILGUN_DOMAIN"), {
         from: config.loginFrom,
         to: email,
@@ -137,7 +141,9 @@ export function cowpunkify<R extends UserRequired, T extends UserRow>(config: Co
       const data = await request.formData()
       const newUserOK = data.get('register') ? true : false
       let email = data.get('email') as string
-      const extraData = Array.from(data.entries()).filter(([key]) => key !== 'email' && key !== 'register' && key !== 'redirect').filter(x => x[1] instanceof String) as [string, string][]
+      const extraData = (Array.from(data.entries()) as [string, string][])
+        .filter(([key]) => key !== 'email' && key !== 'register' && key !== 'redirect')
+        .filter(x => x[1] as any instanceof String)
       if (!email || !validator.isEmail(email)) throw new Error('Invalid email')
       email = validator.normalizeEmail(email) as string
       const redirectURL = data.get('redirect') as string | undefined
@@ -156,6 +162,18 @@ export function cowpunkify<R extends UserRequired, T extends UserRow>(config: Co
       const email = url.searchParams.get('email')
       if (!email || !validator.isEmail(email)) throw redirect('/auth/login')
       return json({ LOGIN_EMAIL_FROM: punk.config.loginFrom, })
+    },
+
+    async logoutAction({ request }: ActionArgs) {
+      const session = await punk.storage.getSession(request.headers.get("Cookie"))
+      session.unset('userId')
+      session.unset('email')
+      session.unset('roles')
+      return redirect('/', {
+        headers: {
+          "Set-Cookie": await punk.storage.commitSession(session),
+        },
+      });
     },
 
     // TODO: register and extra data
