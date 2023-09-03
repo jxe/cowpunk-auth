@@ -83,13 +83,13 @@ export function cowpunkify<R extends UserRequired, T extends UserRow>(config: Co
       return await config.users.findUnique({ where: { id: userId } })
     },
 
-    async upsertLoginCode(email: string, newUserOK: boolean, extraData?: [string, string][]) {
+    async upsertLoginCode(email: string, register: boolean, extraData?: [string, string][]) {
       const loginCode = randomCode(6)
       const loginCodeExpiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24)
       await config.emailCodes.upsert({
         where: { email },
-        create: { email, loginCode, loginCodeExpiresAt, register: newUserOK, extraData },
-        update: { loginCode, loginCodeExpiresAt, register: newUserOK, extraData }
+        create: { email, loginCode, loginCodeExpiresAt, register, extraData },
+        update: { loginCode, loginCodeExpiresAt, register, extraData }
       })
       return loginCode
     },
@@ -138,18 +138,27 @@ export function cowpunkify<R extends UserRequired, T extends UserRow>(config: Co
     },
 
     async loginSubmitAction({ request }: ActionArgs) {
+      // get data from form
       const data = await request.formData()
-      const newUserOK = data.get('register') ? true : false
       let email = data.get('email') as string
+      let register = data.get('register') ? true : false
+      const autoregister = data.get('autoregister') ? true : false
+      const redirectURL = data.get('redirect') as string | undefined
       const extraData = (Array.from(data.entries()) as [string, string][])
-        .filter(([key]) => key !== 'email' && key !== 'register' && key !== 'redirect')
+        .filter(([key]) => ['email', 'register', 'redirect', 'autoregister'].indexOf(key) === -1)
         .filter(x => x[1] as any instanceof String)
+
+      // validate email
       if (!email || !validator.isEmail(email)) throw new Error('Invalid email')
       email = validator.normalizeEmail(email) as string
-      const redirectURL = data.get('redirect') as string | undefined
+
+      // do we need to register a new user?
       const user = await punk.userByEmail(email)
-      if (!user && !newUserOK) throw new Error('User not found')
-      const loginCode = await punk.upsertLoginCode(email, newUserOK, extraData)
+      if (!user && !register && !autoregister) throw new Error('User not found')
+      if (!user) register = true
+      const loginCode = await punk.upsertLoginCode(email, register, extraData)
+
+      // send login code & redirect
       await punk.sendLoginCode(email, loginCode)
       const search = new URLSearchParams()
       search.set('email', email)
