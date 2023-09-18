@@ -146,7 +146,7 @@ export function cowpunkify<R extends UserRequired, T extends UserRow>(config: Co
       const redirectURL = data.get('redirect') as string | undefined
       const extraData = (Array.from(data.entries()) as [string, string][])
         .filter(([key]) => ['email', 'register', 'redirect', 'autoregister'].indexOf(key) === -1)
-        .filter(x => x[1] as any instanceof String)
+        .filter(x => typeof x[1] === 'string')
 
       // validate email
       if (!email || !validator.isEmail(email)) throw new Error('Invalid email')
