@@ -31,7 +31,6 @@ interface EmailCodeRow {
   email: string
   loginCode: string
   loginCodeExpiresAt: Date
-  register: boolean
 }
 
 interface UserRequired {
@@ -165,24 +164,23 @@ export function cowpunkify<R extends UserRequired, T extends UserRow>(config: Co
       if (!email || !validator.isEmail(email)) throw new Error('Invalid email')
       email = validator.normalizeEmail(email) as string
 
-      // do we need to register a new user?
-      const user = await config.users.findUnique({ where: { email } })
-      const register = !user
-
       // create login code
       const loginCode = randomCode(6)
       const loginCodeExpiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24)
       await config.emailCodes.upsert({
         where: { email },
-        create: { email, loginCode, loginCodeExpiresAt, register },
-        update: { loginCode, loginCodeExpiresAt, register }
+        create: { email, loginCode, loginCodeExpiresAt },
+        update: { loginCode, loginCodeExpiresAt }
       })
 
       // send login code & redirect
       await punk.sendLoginCode(email, loginCode)
       const search = new URLSearchParams()
       search.set('email', email)
-      if (register) {
+
+      // do we need to register a new user?
+      const user = await config.users.findUnique({ where: { email } })
+      if (!user) {
         return redirect(`/auth/register?${search.toString()}`)
       } else {
         return redirect(`/auth/code?${search.toString()}`)
