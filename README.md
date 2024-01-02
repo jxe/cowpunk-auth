@@ -2,11 +2,7 @@ To install, put something like this in `app/routes/root.tsx`
 
 ```typescript
 export async function loader({ request }: LoaderArgs) {
-  const userId = await auth.getUserId(request)
-  const user = userId && await db.user.findUnique({
-    where: { id: userId }
-  })
-  return json({ user })
+  return json({ user: await auth.getCurrentUser(request) })
 }
 
 export function useCurrentUser() {
@@ -29,7 +25,6 @@ export const auth = cowpunkify({
   users: db.user,
   emailCodes: db.emailCodes,
 })
-
 ```
 
 and copy over the routes in `example/app/routes/auth`!
