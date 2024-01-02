@@ -2,6 +2,14 @@ import { type ActionArgs, type LoaderArgs, createCookieSessionStorage, json, red
 import Mailgun from "mailgun.js";
 import formData from "form-data";
 import validator from 'validator';
+import jwt from 'jsonwebtoken';
+
+// TO CHANGE
+// - pass three routes to cowpunkify (login, code, register) and use them in redirects
+// - in `loginSubmitAction`, redirect to either code or register
+// - split `userForLoginCode` into `userForLoginCode` and `userForRegisterCode` (and its parents too)
+// - split `codeSubmitAction` into `loginCodeSubmitAction` and `registerCodeSubmitAction`
+// - patch security hole in `userForRegisterCode` (see TODO)
 
 function env(name: string,) {
   if (process.env[name]) return process.env[name]!
@@ -73,14 +81,60 @@ export function cowpunkify<R extends UserRequired, T extends UserRow>(config: Co
       },
     }),
 
+    signOauthToken(userId: number, clientId: string) {
+      return jwt.sign({ userId, clientId }, env('JWT_SECRET'), { expiresIn: '1h' })
+    },
+
+    async getOauthToken(request: Request) {
+      const authHeader = request.headers.get("Authorization")
+      if (!authHeader) return null
+      const token = authHeader.split(" ")[1]
+      return jwt.verify(token, env('JWT_SECRET')) as { userId: number } | null
+    },
+
+    async getSession(request: Request) {
+      return await this.storage.getSession(request.headers.get("Cookie"))
+    },
+
     async getUserId(request: Request) {
-      return (await this.storage.getSession(request.headers.get("Cookie"))).get('userId')
+      const oauthToken = await this.getOauthToken(request)
+      if (oauthToken) return oauthToken.userId
+      const session = await this.getSession(request)
+      if (session.has('userId')) return session.get('userId') as number
+      return null
+    },
+
+    async ensureAPIAuthorized(request: Request) {
+      const oauthToken = await this.getOauthToken(request)
+      if (!oauthToken) throw new Error("Invalid authorization token.")
+      return oauthToken as { userId: number, clientId: string }
+    },
+
+    async ensureLoggedIn(request: Request, extraParams = {}) {
+      const userId = await this.getUserId(request)
+      if (userId) return userId
+      const params = new URLSearchParams({ redirect: request.url, ...extraParams });
+      throw redirect(`/auth/login?${params.toString()}`)
     },
 
     async getCurrentUser(request: Request) {
       const userId = await this.getUserId(request)
       if (!userId) return null
       return await config.users.findUnique({ where: { id: userId } })
+    },
+
+    async mail(email: string, subject: string, text: string) {
+      const mailgun = new Mailgun(formData).client({
+        username: 'api',
+        key: env("MAILGUN_API_KEY"),
+        url: process.env["MAILGUN_URL"] || undefined,
+      })
+      await mailgun.messages.create(process.env["MAILGUN_DOMAIN"]!, {
+        from: config.loginFrom,
+        to: email,
+        subject,
+        text
+      });
     },
 
     async upsertLoginCode(email: string, register: boolean, extraData?: [string, string][]) {
@@ -99,17 +153,7 @@ export function cowpunkify<R extends UserRequired, T extends UserRow>(config: Co
     },
 
     async sendLoginCode(email: string, code: string) {
-      const mailgun = new Mailgun(formData).client({
-        username: 'api',
-        key: env("MAILGUN_API_KEY"),
-        url: process.env["MAILGUN_URL"] || undefined,
-      })
-      await mailgun.messages.create(env("MAILGUN_DOMAIN"), {
-        from: config.loginFrom,
-        to: email,
-        subject: "Your login code",
-        text: `Here's your login code for ${config.site}.\n\n   ${code}`
-      });
+      await this.mail(email, "Your login code", `Here's your login code for ${config.site}.\n\n   ${code}`)
     },
 
     async resendLoginCode(email: string) {

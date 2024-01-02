@@ -1,6 +1,6 @@
 {
   "name": "cowpunk-auth",
-  "version": "0.0.7",
+  "version": "0.1.0",
   "description": "Cowpunk auth",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -16,15 +16,17 @@
     "LICENSE"
   ],
   "dependencies": {
+    "jsonwebtoken": "^9.0.2",
     "mailgun.js": "^9.1.2",
     "validator": "^13.9.0"
   },
   "devDependencies": {
+    "@remix-run/node": "latest",
+    "@types/jsonwebtoken": "^9.0.5",
     "@types/node": "^18.16.19",
     "@types/validator": "^13.7.17",
     "tsup": "^7.1.0",
-    "typescript": "latest",
-    "@remix-run/node": "latest"
+    "typescript": "latest"
   },
   "peerDependencies": {
     "@remix-run/node": "latest"
