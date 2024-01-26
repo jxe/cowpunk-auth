@@ -1,6 +1,6 @@
 import { ActionFunctionArgs, json } from "@remix-run/node";
-import { Form, isRouteErrorResponse, useActionData, useLoaderData, useRouteError, useSearchParams } from "@remix-run/react";
-import { ReactNode, useEffect, useState } from "react";
+import { Form, useActionData, useLoaderData, useSearchParams } from "@remix-run/react";
+import { useEffect, useState } from "react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { auth } from "~/config.server";
@@ -21,7 +21,8 @@ export async function action({ request }: ActionFunctionArgs) {
   return auth.redirectAsLoggedIn(request, user)
 }
 
-function CodeScreen({ children, resent }: { children?: ReactNode, resent?: string }) {
+export default function CodeScreen() {
+  const { resent, error } = useActionData<{ resent?: boolean, error?: string }>()
   const [params] = useSearchParams()
   const register = params.get('register') === 'yes'
   const buttonTitle = register ? "Register" : "Let me in!"
@@ -35,7 +36,7 @@ function CodeScreen({ children, resent }: { children?: ReactNode, resent?: strin
   return <div className="grid h-screen place-items-center">
     <Form method="post" className="flex flex-col gap-2 pt-12">
       <h1>
-        {children || <>
+        {error || <>
           Please check your email for a six digit code!<br /> (Look for an email from {LOGIN_EMAIL_FROM})
         </>}
       </h1>
@@ -51,20 +52,4 @@ function CodeScreen({ children, resent }: { children?: ReactNode, resent?: strin
       {resent ? "Re-sent!" : null}
     </Form>
   </div>
-}
-
-export default function CodePage() {
-  const actionData = useActionData<{ resent: boolean }>()
-  return <CodeScreen resent={actionData?.resent ? "Resent!" : undefined} />
-}
-
-export function ErrorBoundary() {
-  const error = useRouteError();
-  const actionData = useActionData<{ resent: boolean }>()
-  const resent = actionData?.resent
-  if (isRouteErrorResponse(error)) {
-    return <CodeScreen resent={resent ? "Resent!" : undefined}>
-      Invalid code. Please try again. ({error.data?.message})
-    </CodeScreen>
-  }
 }

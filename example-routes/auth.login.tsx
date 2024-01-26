@@ -1,4 +1,4 @@
-import { Form, useRouteError } from "@remix-run/react";
+import { Form, useActionData } from "@remix-run/react";
 import { auth } from "~/config.server";
 import { ActionFunctionArgs, LoaderFunctionArgs, json } from "@remix-run/node";
 import { Button } from "~/components/ui/button";
@@ -19,18 +19,15 @@ export async function action(args: ActionFunctionArgs) {
 }
 
 export default function LoginScreen() {
+  const { error } = useActionData()
   return <div className="grid h-screen place-items-center">
     <Form method="post" className="flex flex-col gap-2 pt-12">
       <h1>
         Enter your email, and we'll send you a code you can use to log in.
       </h1>
+      {error && <div className="text-red-500">{error}</div>}
       <Input placeholder="Your email here" type="email" name="email" />
       <Button type="submit"> Send me the code! </Button>
     </Form>
   </div>
-}
-
-export function ErrorBoundary() {
-  const error = useRouteError();
-  return <div>Something went wrong: {JSON.stringify(error)}</div>
 }

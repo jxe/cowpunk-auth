@@ -4,9 +4,6 @@ import formData from "form-data";
 import validator from 'validator';
 import jwt from 'jsonwebtoken';
 
-// TO CHANGE
-// - pass three routes to cowpunkify (login, code, register) and use them in redirects
-
 const redirectCookie = createCookie('redirect', {
   path: "/",
   secrets: [env("SESSION_SECRET")],
@@ -160,9 +157,10 @@ export function cowpunkify<R extends UserRequired, T extends UserRow>(config: Co
       return redirect ? { "Set-Cookie": await redirectCookie.serialize(redirect) } : undefined
     },
 
+    // called from auth.login
     async sendLoginCodeAndRedirect(email: string) {
       // validate email
-      if (!email || !validator.isEmail(email)) throw new Error('Invalid email')
+      if (!email || !validator.isEmail(email)) return json({ error: 'Invalid email' })
       email = punk.normalizeEmail(email)
 
       // create login code
@@ -196,33 +194,35 @@ export function cowpunkify<R extends UserRequired, T extends UserRow>(config: Co
       });
     },
 
+    // called from auth.code
     async getUserForLoginCodeRequest(request: Request) {
       const data = await request.clone().formData()
       const params = new URL(request.url).searchParams
       let email = params.get('email') as string
       let code = data.get("code") as string
       if (!email || !validator.isEmail(email)) throw new Error('Invalid email')
-      if (!code) throw new Error("Missing email or code");
+      if (!code) throw json({ error: "Please enter a code" });
       email = punk.normalizeEmail(email)
       const entry = await config.emailCodes.findFirst({ where: { email, loginCode: code } })
-      if (!entry) throw new Error("Invalid code")
-      if (entry.loginCodeExpiresAt < new Date()) throw new Error("Code expired")
+      if (!entry) throw json({ error: "Invalid code" });
+      if (entry.loginCodeExpiresAt < new Date()) throw json({ error: "Code expired" });
       const user = config.users.findUnique({ where: { email } })
       if (!user) throw new Error("User not found")
       return user
     },
 
+    // called from auth.code
     async registerUserFromLoginCodeRequest(request: Request, requiredToRegister?: (keyof R)[]) {
       const data = await request.clone().formData()
       const params = new URL(request.url).searchParams
       let email = params.get('email') as string
       let code = data.get("code") as string
       if (!email || !validator.isEmail(email)) throw new Error('Invalid email')
-      if (!code) throw new Error("Missing email or code");
+      if (!code) throw json({ error: "Please enter a code" });
       email = punk.normalizeEmail(email)
       const entry = await config.emailCodes.findFirst({ where: { email, loginCode: code } })
-      if (!entry) throw new Error("Invalid code")
-      if (entry.loginCodeExpiresAt < new Date()) throw new Error("Code expired")
+      if (!entry) throw json({ error: "Invalid code" });
+      if (entry.loginCodeExpiresAt < new Date()) throw json({ error: "Code expired" });
 
       const extraData = {} as Record<string, string>
       requiredToRegister?.forEach(key => {
@@ -232,6 +232,7 @@ export function cowpunkify<R extends UserRequired, T extends UserRow>(config: Co
       return await config.users.create({ data: { email, ...extraData } as R })
     },
 
+    // called from auth.code
     async redirectAsLoggedIn(request: Request, user: T) {
       const redirectTo = await redirectCookie.parse(request.headers.get("Cookie") || "") || "/"
       const session = await punk.storage.getSession()
