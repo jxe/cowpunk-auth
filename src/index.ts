@@ -120,22 +120,26 @@ export function cowpunkify<R extends UserRequired, T extends UserRow>(config: Co
       return await config.users.findUnique({ where: { id: userId } })
     },
 
-    async mail(email: string, subject: string, text: string) {
+    async mail({ to, from = config.loginFrom, subject, text }: { to: string, subject: string, text: string, from?: string }) {
       const mailgun = new Mailgun(formData).client({
         username: 'api',
         key: env("MAILGUN_API_KEY"),
         url: process.env["MAILGUN_URL"] || undefined,
       })
       await mailgun.messages.create(process.env["MAILGUN_DOMAIN"]!, {
-        from: config.loginFrom,
-        to: email,
+        from,
+        to,
         subject,
         text
       });
     },
 
     async sendLoginCode(email: string, code: string) {
-      await this.mail(email, "Your login code", `Here's your login code for ${config.site}.\n\n   ${code}`)
+      await this.mail({
+        to: email,
+        subject: "Your login code",
+        text: `Here's your login code for ${config.site}.\n\n   ${code}`
+      })
     },
 
     normalizeEmail(email: string): string {
@@ -195,11 +199,10 @@ export function cowpunkify<R extends UserRequired, T extends UserRow>(config: Co
     },
 
     // called from auth.code
-    async getUserForLoginCodeRequest(request: Request) {
-      const data = await request.clone().formData()
-      const params = new URL(request.url).searchParams
-      let email = params.get('email') as string
-      let code = data.get("code") as string
+    async getUserForLoginCodeRequest({ email, code }: {
+      email: string,
+      code: string,
+    }) {
       if (!email || !validator.isEmail(email)) throw new Error('Invalid email')
       if (!code) throw json({ error: "Please enter a code" });
       email = punk.normalizeEmail(email)
@@ -212,24 +215,18 @@ export function cowpunkify<R extends UserRequired, T extends UserRow>(config: Co
     },
 
     // called from auth.code
-    async registerUserFromLoginCodeRequest(request: Request, requiredToRegister?: (keyof R)[]) {
-      const data = await request.clone().formData()
-      const params = new URL(request.url).searchParams
-      let email = params.get('email') as string
-      let code = data.get("code") as string
+    async registerUserFromLoginCodeRequest({ email, code, extraUserFields }: {
+      email: string,
+      code: string,
+      extraUserFields: Omit<R, "email">
+    }) {
       if (!email || !validator.isEmail(email)) throw new Error('Invalid email')
       if (!code) throw json({ error: "Please enter a code" });
       email = punk.normalizeEmail(email)
       const entry = await config.emailCodes.findFirst({ where: { email, loginCode: code } })
       if (!entry) throw json({ error: "Invalid code" });
-      if (entry.loginCodeExpiresAt < new Date()) throw json({ error: "Code expired" });
-
-      const extraData = {} as Record<string, string>
-      requiredToRegister?.forEach(key => {
-        const value = data.get(key as string) as string
-        extraData[key as string] = value
-      })
-      return await config.users.create({ data: { email, ...extraData } as R })
+      if (entry.loginCodeExpiresAt < new Date()) throw json({ error: "Code expired" })
+      return await config.users.create({ data: { email, ...extraUserFields } as R })
     },
 
     // called from auth.code
