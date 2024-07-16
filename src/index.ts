@@ -28,7 +28,7 @@ interface EmailCodeRow {
   email: string
   loginCode: string
   loginCodeExpiresAt: Date
-  extraData?: Record<string, any>
+  extraData?: any
 }
 
 interface UserRequired {
