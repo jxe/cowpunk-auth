@@ -28,6 +28,7 @@ interface EmailCodeRow {
   email: string
   loginCode: string
   loginCodeExpiresAt: Date
+  extraData?: Record<string, any>
 }
 
 interface UserRequired {
@@ -161,26 +162,40 @@ export function cowpunkify<R extends UserRequired, T extends UserRow>(config: Co
       return redirect ? { "Set-Cookie": await redirectCookie.serialize(redirect) } : undefined
     },
 
-    // called from auth.login
-    async sendLoginCodeAndRedirect(email: string) {
+    async generateAndSendLoginCode(email: string, { requireUser }: { requireUser?: boolean }, extraData = {}) {
       // validate email
-      if (!email || !validator.isEmail(email)) return json({ error: 'Invalid email' })
+      if (!email || !validator.isEmail(email)) return { success: false, error: 'Invalid email' }
       email = punk.normalizeEmail(email)
+      const user = await config.users.findUnique({ where: { email } })
+      if (!user && requireUser) return {
+        success: false,
+        error: 'User not found',
+        foundUser: false
+      }
 
       // create login code
       const loginCode = randomCode(6)
       const loginCodeExpiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24)
       await config.emailCodes.upsert({
         where: { email },
-        create: { email, loginCode, loginCodeExpiresAt },
-        update: { loginCode, loginCodeExpiresAt }
+        create: { email, loginCode, loginCodeExpiresAt, extraData },
+        update: { loginCode, loginCodeExpiresAt, extraData }
       })
 
       // send login code & redirect
       await punk.sendLoginCode(email, loginCode)
-      const user = await config.users.findUnique({ where: { email } })
+      return {
+        success: true,
+        foundUser: !!user
+      }
+    },
+
+    // (DEPRECATED) called from auth.login
+    async sendLoginCodeAndRedirect(email: string) {
+      const result = await this.generateAndSendLoginCode(email, { requireUser: false })
+      if (result.error) throw json({ error: result.error })
       const search = new URLSearchParams({ email })
-      if (!user) search.set('register', 'yes')
+      if (!result.foundUser) search.set('register', 'yes')
       return redirect(`/auth/code?${search.toString()}`)
     },
 
@@ -215,10 +230,9 @@ export function cowpunkify<R extends UserRequired, T extends UserRow>(config: Co
     },
 
     // called from auth.code
-    async registerUserFromLoginCodeRequest({ email, code, extraUserFields }: {
+    async verifyLoginCodeRequest({ email, code }: {
       email: string,
       code: string,
-      extraUserFields: Omit<R, "email">
     }) {
       if (!email || !validator.isEmail(email)) throw new Error('Invalid email')
       if (!code) throw json({ error: "Please enter a code" });
@@ -226,6 +240,16 @@ export function cowpunkify<R extends UserRequired, T extends UserRow>(config: Co
       const entry = await config.emailCodes.findFirst({ where: { email, loginCode: code } })
       if (!entry) throw json({ error: "Invalid code" });
       if (entry.loginCodeExpiresAt < new Date()) throw json({ error: "Code expired" })
+      return entry
+    },
+
+    // (DEPRECATED) called from auth.code
+    async registerUserFromLoginCodeRequest({ email, code, extraUserFields }: {
+      email: string,
+      code: string,
+      extraUserFields: Omit<R, "email">
+    }) {
+      await punk.verifyLoginCodeRequest({ email, code })
       return await config.users.create({ data: { email, ...extraUserFields } as R })
     },
 
